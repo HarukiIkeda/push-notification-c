@@ -1,0 +1,189 @@
+version: '3'
+
+services:
+  # ==========================================
+  # アプリ層ルータ (Client - Proxy間: 経路追記機能あり)
+  # ==========================================
+  router_1:
+    build: .
+    container_name: ndn-cpush-router-1
+    privileged: true
+    environment:
+      - ROUTER_NAME=r1
+      - LISTEN_REG=/proxy/register
+      - NEXT_REG=/router/r2/register
+      - NEXT_NOTIFY=/client/A/notify
+    volumes:
+      - .:/app
+    command: >
+      bash -c "nfd-start && 
+               sleep 2 && 
+               nfdc face create remote udp://ndn-cpush-client && 
+               nfdc route add /client udp://ndn-cpush-client && 
+               nfdc face create remote udp://ndn-cpush-router-2 && 
+               nfdc route add /router/r2 udp://ndn-cpush-router-2 && 
+               python3 app_router.py"
+
+  router_2:
+    build: .
+    container_name: ndn-cpush-router-2
+    privileged: true
+    environment:
+      - ROUTER_NAME=r2
+      - LISTEN_REG=/router/r2/register
+      - NEXT_REG=/router/r3/register
+      - NEXT_NOTIFY=/router/r1/notify
+    volumes:
+      - .:/app
+    command: >
+      bash -c "nfd-start && 
+               sleep 2 && 
+               nfdc face create remote udp://ndn-cpush-router-1 && 
+               nfdc route add /router/r1 udp://ndn-cpush-router-1 && 
+               nfdc face create remote udp://ndn-cpush-router-3 && 
+               nfdc route add /router/r3 udp://ndn-cpush-router-3 && 
+               python3 app_router.py"
+
+  router_3:
+    build: .
+    container_name: ndn-cpush-router-3
+    privileged: true
+    environment:
+      - ROUTER_NAME=r3
+      - LISTEN_REG=/router/r3/register
+      - NEXT_REG=/proxy/register_fw
+      - NEXT_NOTIFY=/router/r2/notify
+    volumes:
+      - .:/app
+    command: >
+      bash -c "nfd-start && 
+               sleep 2 && 
+               nfdc face create remote udp://ndn-cpush-router-2 && 
+               nfdc route add /router/r2 udp://ndn-cpush-router-2 && 
+               nfdc face create remote udp://ndn-cpush-proxy && 
+               nfdc route add /proxy udp://ndn-cpush-proxy && 
+               python3 app_router.py"
+
+  # ==========================================
+  # 純粋なルータ (Server - Proxy間: Pythonなし)
+  # ==========================================
+  sp_router_1:
+    build: .
+    container_name: ndn-cpush-sp-r1
+    privileged: true
+    command: >
+      bash -c "nfd-start && 
+               sleep 4 && 
+               nfdc face create remote udp://ndn-cpush-proxy && 
+               nfdc route add /proxy udp://ndn-cpush-proxy && 
+               nfdc face create remote udp://ndn-cpush-sp-r2 && 
+               nfdc route add /server udp://ndn-cpush-sp-r2 && 
+               tail -f /dev/null" # アプリがないためコンテナを永続化
+
+  sp_router_2:
+    build: .
+    container_name: ndn-cpush-sp-r2
+    privileged: true
+    command: >
+      bash -c "nfd-start && 
+               sleep 4 && 
+               nfdc face create remote udp://ndn-cpush-sp-r1 && 
+               nfdc route add /proxy udp://ndn-cpush-sp-r1 && 
+               nfdc face create remote udp://ndn-cpush-sp-r3 && 
+               nfdc route add /server udp://ndn-cpush-sp-r3 && 
+               tail -f /dev/null"
+
+  sp_router_3:
+    build: .
+    container_name: ndn-cpush-sp-r3
+    privileged: true
+    command: >
+      bash -c "nfd-start && 
+               sleep 4 && 
+               nfdc face create remote udp://ndn-cpush-sp-r2 && 
+               nfdc route add /proxy udp://ndn-cpush-sp-r2 && 
+               nfdc face create remote udp://ndn-cpush-server && 
+               nfdc route add /server udp://ndn-cpush-server && 
+               tail -f /dev/null"
+
+  # ==========================================
+  # 純粋なルータ (Client - Server間: Pythonなし)
+  # ==========================================
+  sc_router_1:
+    build: .
+    container_name: ndn-cpush-sc-r1
+    privileged: true
+    command: >
+      bash -c "nfd-start && 
+               sleep 4 && 
+               nfdc face create remote udp://ndn-cpush-sc-r2 && 
+               nfdc route add /server udp://ndn-cpush-sc-r2 && 
+               tail -f /dev/null"
+
+  sc_router_2:
+    build: .
+    container_name: ndn-cpush-sc-r2
+    privileged: true
+    command: >
+      bash -c "nfd-start && 
+               sleep 4 && 
+               nfdc face create remote udp://ndn-cpush-sc-r3 && 
+               nfdc route add /server udp://ndn-cpush-sc-r3 && 
+               tail -f /dev/null"
+
+  sc_router_3:
+    build: .
+    container_name: ndn-cpush-sc-r3
+    privileged: true
+    command: >
+      bash -c "nfd-start && 
+               sleep 4 && 
+               nfdc face create remote udp://ndn-cpush-server && 
+               nfdc route add /server udp://ndn-cpush-server && 
+               tail -f /dev/null"
+
+  # ==========================================
+  # コアノード群 (Proxy, Server, Client)
+  # ==========================================
+  proxy:
+    build: .
+    container_name: ndn-cpush-proxy
+    privileged: true
+    volumes:
+      - .:/app
+    command: >
+      bash -c "nfd-start && 
+               sleep 6 && 
+               nfdc face create remote udp://ndn-cpush-router-3 && 
+               nfdc route add /router/r3 udp://ndn-cpush-router-3 && 
+               nfdc face create remote udp://ndn-cpush-sp-r1 && 
+               nfdc route add /server udp://ndn-cpush-sp-r1 && 
+               python3 proxy.py"
+
+  server:
+    build: .
+    container_name: ndn-cpush-server
+    privileged: true
+    volumes:
+      - .:/app
+    command: >
+      bash -c "nfd-start && 
+               sleep 8 && 
+               nfdc face create remote udp://ndn-cpush-sp-r3 && 
+               nfdc route add /proxy udp://ndn-cpush-sp-r3 && 
+               python3 server.py"
+
+  client:
+    build: .
+    container_name: ndn-cpush-client
+    privileged: true
+    volumes:
+      - .:/app
+    command: >
+      bash -c "nfd-start && 
+               sleep 10 && 
+               nfdc face create remote udp://ndn-cpush-router-1 && 
+               nfdc route add /proxy udp://ndn-cpush-router-1 &&  
+               nfdc face create remote udp://ndn-cpush-sc-r1 && 
+               nfdc route add /server udp://ndn-cpush-sc-r1 && 
+               python3 client.py"
