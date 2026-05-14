@@ -12,7 +12,7 @@ MY_PREFIX = "/client/A/notify"
 SERVER_TARGET_COMPUTE = "/server/compute"
 SECRET_KEY = b'16bytesecretkey!'
 
-#通知を受け取ったときの処理
+# 通知を受け取ったときの処理
 @app.route(MY_PREFIX)
 def on_notification(name, param, app_param):
     print(f"\n[Client] 完了通知を受信: {Name.to_str(name)}", flush=True)
@@ -37,21 +37,34 @@ async def fetch_result(target_name):
     except:
         print("[Client] 結果取得タイムアウト", flush=True)
 
-#メインシナリオ
+# メインシナリオ
 async def main():
     await asyncio.sleep(5) # NFDとルータの起動待ち
-    session_id = str(uuid.uuid4())[:8] # ランダムな8文字の文字列をセッションIDとして作成
+    temp_id = str(uuid.uuid4())[:8] # 要求管理用の一時IDを作成
     
-    # 1. 事前登録Interestの送信 (ルータが経路を追記していく)
-    print(f"[Client] 事前登録Interestを送信 (Session ID: {session_id})", flush=True)
-    reg_params = json.dumps({"session_id": session_id, "path": []}).encode('utf-8') ## IDと空の経路リストをJSON化
+    # 1. 事前登録Interestの送信 (セッションIDは含まない。ルータが経路を追記していく)
+    print(f"[Client] 事前登録Interestを送信 (Temp ID: {temp_id})", flush=True)
+    reg_params = json.dumps({"temp_id": temp_id, "path": []}).encode('utf-8')
+    
+    session_id = None
     try:
-        # ↓↓↓ 本来のNDNの姿: プロキシを直接指定する ↓↓↓
-        await app.express_interest('/proxy/register', app_param=reg_params, must_be_fresh=True, can_be_prefix=True, lifetime=2000)
+        # プロキシへInterestを送信し、DataパケットとしてServer発行のセッションIDを待つ
+        _, _, content = await app.express_interest('/proxy/register', app_param=reg_params, must_be_fresh=True, can_be_prefix=True, lifetime=2000)
+        
+        # 戻ってきたDataからセッションIDを取り出す
+        resp_data = json.loads(bytes(content).decode('utf-8'))
+        session_id = resp_data.get("session_id")
+        print(f"[Client] 登録成功！ Serverから発行された Session ID: {session_id}", flush=True)
+        
     except Exception as e:
         print(f"[Client] 事前登録エラー: {e}", flush=True)
+        return
 
     await asyncio.sleep(1)
+
+    if not session_id:
+        print("[Client] 有効なセッションIDが取得できませんでした。", flush=True)
+        return
 
     # 2. 計算リクエストの送信
     print(f"[Client] 計算要求interestを送信 (Session ID: {session_id})", flush=True)
