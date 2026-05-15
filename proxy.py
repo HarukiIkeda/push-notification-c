@@ -64,7 +64,8 @@ async def forward_to_client_via_router(incoming_name, payload):
             target = f"/router/{last_router}/notify"
             print(f"[Proxy] ローカルに保存された経路情報を使用: {last_router} へ転送", flush=True)
         else:
-            target = "/client/A/notify"
+            print(f"[Proxy] 経路情報が見つかりませんでした。通知を転送できません。", flush=True)
+            return
 
         _, _, content = await app.express_interest(
             target,
