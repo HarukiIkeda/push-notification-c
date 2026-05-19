@@ -42,20 +42,16 @@ async def main():
     await asyncio.sleep(5) # NFDとルータの起動待ち
     temp_id = str(uuid.uuid4())[:8] # 要求管理用の一時IDを作成
     
-    # 1. 事前登録Interestの送信 (セッションIDは含まない。ルータが経路を追記していく)
+    # 1. 事前登録Interestの送信
     print(f"[Client] 事前登録Interestを送信 (Temp ID: {temp_id})", flush=True)
     reg_params = json.dumps({"temp_id": temp_id, "path": []}).encode('utf-8')
     
     session_id = None
     try:
-        # プロキシへInterestを送信し、DataパケットとしてServer発行のセッションIDを待つ
         _, _, content = await app.express_interest('/proxy/register', app_param=reg_params, must_be_fresh=True, can_be_prefix=True, lifetime=2000)
-        
-        # 戻ってきたDataからセッションIDを取り出す
         resp_data = json.loads(bytes(content).decode('utf-8'))
         session_id = resp_data.get("session_id")
         print(f"[Client] 登録成功！ Serverから発行された Session ID: {session_id}", flush=True)
-        
     except Exception as e:
         print(f"[Client] 事前登録エラー: {e}", flush=True)
         return
@@ -68,8 +64,10 @@ async def main():
 
     # 2. 計算リクエストの送信
     print(f"[Client] 計算要求interestを送信 (Session ID: {session_id})", flush=True)
+    
+    # 🌟 アップデート: 固定名ではなく session_id を暗号化して Token とする
     cipher = AES.new(SECRET_KEY, AES.MODE_GCM)
-    ciphertext, tag = cipher.encrypt_and_digest(b"client/A")
+    ciphertext, tag = cipher.encrypt_and_digest(session_id.encode('utf-8'))
     token = base64.urlsafe_b64encode(cipher.nonce + tag + ciphertext).decode().rstrip('=')
 
     req_params = json.dumps({"proxy": "/proxy/notify", "token": token, "id": session_id}).encode('utf-8')

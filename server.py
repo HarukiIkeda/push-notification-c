@@ -18,13 +18,11 @@ def on_register_session(name, param, app_param):
         data = json.loads(bytes(app_param).decode('utf-8'))
         temp_id = data.get("temp_id")
         
-        # サーバー側で正式なセッションIDを生成 (例として12文字)
         session_id = str(uuid.uuid4())[:12] 
         active_sessions.add(session_id)
         
         print(f"[Server] セッションを発行・登録しました: TempID={temp_id} -> SessionID={session_id}", flush=True)
         
-        # ProxyへDataパケットとしてIDを返す
         resp_data = json.dumps({"temp_id": temp_id, "session_id": session_id}).encode('utf-8')
         app.put_data(name, content=resp_data, freshness_period=1000)
         
@@ -47,7 +45,6 @@ async def process_compute(name, app_param):
         if tx_id not in active_sessions:
             print(f"[Server] 警告: 未登録のSession IDからの計算要求です (ID={tx_id})", flush=True)
             
-        # 受付完了のAckを返す
         app.put_data(name, content=f"Accepted: {tx_id}".encode('utf-8'), freshness_period=1000)
         
         print(f"[Server] 計算処理を開始 (ID={tx_id})", flush=True)
@@ -56,7 +53,6 @@ async def process_compute(name, app_param):
         results_store[tx_id] = f"Result_of_{tx_id}_is_42"
         print(f"[Server] 計算完了", flush=True)
         
-        # プロキシへの通知タスクを起動
         asyncio.create_task(send_notification(target_proxy, token, tx_id))
     except Exception as e:
         print(f"[Server] 処理失敗: {e}", flush=True)
@@ -66,6 +62,7 @@ async def send_notification(proxy_name, token, tx_id):
     notify_payload = {
         "status": "Complete",
         "id": tx_id,
+        "token": token,  # 🌟 アップデート: プロキシが検証しやすいようペイロードにもTokenを含める
         "fetch_name": f"{LISTEN_PREFIX_FETCH}/{tx_id}"
     }
     
@@ -75,9 +72,7 @@ async def send_notification(proxy_name, token, tx_id):
         await app.express_interest(
             target,
             app_param=json.dumps(notify_payload).encode('utf-8'),
-            must_be_fresh=True,
-            can_be_prefix=True,
-            lifetime=2000
+            must_be_fresh=True, can_be_prefix=True, lifetime=2000
         )
         
         print(f"[Server] クライアントからの通知受領Ackを確認しました (ID={tx_id})", flush=True)
