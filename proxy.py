@@ -1,10 +1,10 @@
 # proxy.py
 from ndn.app import NDNApp
 from ndn.encoding import Name, Component
-from Crypto.Cipher import AES
 import asyncio
 import json
-import base64
+import hmac
+import hashlib
 
 app = NDNApp()
 LISTEN_PREFIX = "/proxy/notify"
@@ -53,49 +53,40 @@ async def forward_to_client_via_router(incoming_name, payload):
         session_id = notify_data.get("id")
         token = notify_data.get("token")
         
-        # 🌟 アップデート: Tokenの復号と検証処理
-        if not token:
-            print(f"[Proxy] 警告: Tokenがありません。通知を破棄します。", flush=True)
+        if not token or not session_id:
+            print(f"[Proxy] 警告: IDまたはTokenがありません。通知を破棄します。", flush=True)
             return
 
-        try:
-            # Base64のパディング復元
-            token_padded = token + '=' * (-len(token) % 4)
-            decoded = base64.urlsafe_b64decode(token_padded)
-            nonce = decoded[:16]
-            tag = decoded[16:32]
-            ciphertext = decoded[32:]
-            
-            cipher = AES.new(SECRET_KEY, AES.MODE_GCM, nonce=nonce)
-            decrypted_id = cipher.decrypt_and_verify(ciphertext, tag).decode('utf-8')
-            
-            if decrypted_id != session_id:
-                print(f"[Proxy] 認証失敗: 復号ID({decrypted_id})が Session ID({session_id}) と不一致です。破棄します。", flush=True)
-                return
-            
-            print(f"[Proxy] Token検証成功: 認証された正規の通知です。(ID={session_id})", flush=True)
-        except Exception as e:
-            print(f"[Proxy] 検証エラー: Tokenの不正または改ざんを検知しました。破棄します。({e})", flush=True)
+        # 1. テーブルにIDが存在するか確認（存在しない場合は即座に破棄し、重いHMAC計算を避ける）
+        if session_id not in session_table:
+            print(f"[Proxy] 経路情報が見つからない、または既に利用済みのセッションです (ID={session_id})。", flush=True)
             return
 
-        # 🌟 アップデート: 経路は pop を使って取得と同時に削除 (リプレイ攻撃防止)
-        path = session_table.pop(session_id, None)
+        # 2. 【変更点】HMACの再計算と検証
+        expected_token = hmac.new(SECRET_KEY, session_id.encode('utf-8'), hashlib.sha256).hexdigest()
         
-        if path is not None:
-            if path:
-                last_router = path[-1]
-                target = f"/router/{last_router}/notify"
-                print(f"[Proxy] ローカル経路情報を使用: {last_router} へ転送します", flush=True)
-            else:
-                target = "/client/A/notify"
+        # タイミング攻撃を防ぐため、安全な比較関数を使用
+        if not hmac.compare_digest(token, expected_token):
+            print(f"[Proxy] 認証失敗: Tokenの不正または改ざんを検知しました。破棄します。", flush=True)
+            return
+            
+        print(f"[Proxy] Token検証成功: 認証された正規の通知です。(ID={session_id})", flush=True)
 
-            _, _, content = await app.express_interest(
-                target, app_param=payload,
-                must_be_fresh=True, can_be_prefix=True, lifetime=2000
-            )
-            app.put_data(incoming_name, content=content, freshness_period=1000)
+        # 検証に成功したので経路情報をPopする
+        path = session_table.pop(session_id)
+        
+        if path:
+            last_router = path[-1]
+            target = f"/router/{last_router}/notify"
+            print(f"[Proxy] ローカル経路情報を使用: {last_router} へ転送します", flush=True)
         else:
-            print(f"[Proxy] 経路情報が見つからない、または既に利用済みのセッションです。", flush=True)
+            target = "/client/A/notify"
+
+        _, _, content = await app.express_interest(
+            target, app_param=payload,
+            must_be_fresh=True, can_be_prefix=True, lifetime=2000
+        )
+        app.put_data(incoming_name, content=content, freshness_period=1000)
 
     except Exception as e:
         print(f"[Proxy] 転送失敗: {e}", flush=True)

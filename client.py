@@ -1,11 +1,11 @@
 # client.py
 from ndn.app import NDNApp
 from ndn.encoding import Name
-from Crypto.Cipher import AES
 import asyncio
 import json
-import base64
 import uuid
+import hmac
+import hashlib
 
 app = NDNApp()
 MY_PREFIX = "/client/A/notify"
@@ -65,10 +65,9 @@ async def main():
     # 2. 計算リクエストの送信
     print(f"[Client] 計算要求interestを送信 (Session ID: {session_id})", flush=True)
     
-    # 🌟 アップデート: 固定名ではなく session_id を暗号化して Token とする
-    cipher = AES.new(SECRET_KEY, AES.MODE_GCM)
-    ciphertext, tag = cipher.encrypt_and_digest(session_id.encode('utf-8'))
-    token = base64.urlsafe_b64encode(cipher.nonce + tag + ciphertext).decode().rstrip('=')
+    # 【変更点】HMAC-SHA256によるToken（署名）の生成
+    token = hmac.new(SECRET_KEY, session_id.encode('utf-8'), hashlib.sha256).hexdigest()
+    print(f"[Client] 生成したHMAC Token: {token[:16]}...", flush=True)
 
     req_params = json.dumps({"proxy": "/proxy/notify", "token": token, "id": session_id}).encode('utf-8')
     try:
